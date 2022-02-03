@@ -35,7 +35,6 @@ class GopclntabStructure:
         self.__is16 = False
         self.__header = bv.read(self.__address, 6)
 
-        binaryninja.log_info(str(self.__header[0]))
         if self.__header == GopclntabStructure.__HEADER__:
             size = bv.read_pointer(self.__address + 8)
             start_address = self.__address + 8 + ptr_size
@@ -57,6 +56,7 @@ class GopclntabStructure:
                 if self.__entries is None:
                     self.__entries = []
 
+                start_address += 2 * ptr_size
                 self.__entries.append((function_address, function_name))
                 self.__entries_counter += 1
 
@@ -93,10 +93,14 @@ class GopclntabStructure:
             base_address = section.start
 
         if not base_address:
+            search_address = 0
             for header_constant in [GopclntabStructure.__HEADER__, GopclntabStructure.__HEADER16__]:
-                candidate_address = bv.find_next_data(0, header_constant)
+                candidate_address = bv.find_next_data(search_address, header_constant)
                 if candidate_address and GopclntabStructure.validate_structure(bv, candidate_address):
                     base_address = candidate_address
+                    break;
+                elif candidate_address:
+                    search_address = candidate_address + 1
 
         if base_address:
             binaryninja.log_info(f"Found .gopclntab structure at 0x{hex(base_address)}")
@@ -106,7 +110,7 @@ class GopclntabStructure:
     @staticmethod
     def validate_structure(bv: binaryninja.binaryview.BinaryView, address: int):
         ptr_size = bv.arch.address_size
-        header = bv.read(address, 8)
+        header = bv.read(address, 6)
         if header == GopclntabStructure.__HEADER__:
             first_entry = bv.read_pointer(address + 8 + ptr_size)
             first_entry_offset = bv.read_pointer(address + 8 + ptr_size * 2)
