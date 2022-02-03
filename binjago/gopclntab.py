@@ -13,7 +13,7 @@ class GopclntabStructure:
                 raise Exception()
 
         self.__address: Optional[int] = None
-        self.__is16: Optional[bool] = None
+        self.__is16: Optional[bool] = False
         self.__header: Optional[bytes] = header
         self.__entries_counter: Optional[int] = entries_counter
         self.__entries: Optional[List] = entries
@@ -26,62 +26,79 @@ class GopclntabStructure:
     def entries_counter(self):
         return self.__entries_counter
 
-    def __update_entry(self, function_address: int, function_name: str) -> bool:
-        pass
+    def __update_entries(self, bv: binaryninja.binaryview.BinaryView) -> bool:
+        if not self.__address or self.__is16:
+            return False
+
+        ptr_size = bv.arch.address_size
+        size = bv.read_pointer(self.__address + 8)
+        start_address = self.__address + 8 + ptr_size
+        end_address = start_address + (size * ptr_size * 2)
+
+        self.__entries_counter = 0
+        while start_address < end_address:
+            offset = bv.read_pointer(start_address + ptr_size)
+            function_address = bv.read_pointer(self.__address + offset)
+            function_name_address = bv.read_pointer(self.__address + offset + ptr_size, size=4) + self.__address
+            function_name = bv.get_ascii_string_at(function_name_address)
+            if not function_name:
+                binaryninja.log_error(f"Couldn't recover function name from 0x{function_name_address}")
+                continue
+
+            function_name = function_name.value
+            binaryninja.log_info(f"Found function {function_name} at 0x{hex(function_address)}")
+
+            if self.__entries is None:
+                self.__entries = []
+
+            start_address += 2 * ptr_size
+            self.__entries.append((function_address, function_name))
+            self.__entries_counter += 1
+
+    def __update_entries16(self, bv: binaryninja.binaryview.BinaryView) -> bool:
+        if not self.__address or not self.__is16:
+            return False
+
+        ptr_size = bv.arch.address_size
+        self.__entries_counter = bv.read_pointer(self.__address + 8)
+        first_entry = bv.read_pointer(self.__address + ptr_size * 6 + 8) + self.__address
+        function_names_start = self.__address + 8 + ptr_size * 7
+
+        for i in range(self.__entries_counter):
+            struct_ptr = bv.read_pointer(first_entry + i * ptr_size * 2 + 8) + first_entry
+            function_address = bv.read_pointer(first_entry + i * ptr_size * 2)
+            function_name = None
+
+            try:
+                function_name_address = bv.read_pointer(struct_ptr + 8, size=4) + function_names_start
+                function_name = bv.get_ascii_string_at(function_name_address)
+            except ValueError as e:
+                binaryninja.log_error(str(e))
+                continue
+
+            if not function_name:
+                binaryninja.log_error(f"Couldn't recover function name from 0x{function_name_address}")
+                continue
+
+            function_name = function_name.value
+            binaryninja.log_info(f"Found function {function_name} at 0x{hex(function_address)}")
+            if self.__entries is None:
+                self.__entries = []
+
+            self.__entries.append((function_address, function_name))
 
     def parse_fields(self, bv: binaryninja.binaryview.BinaryView, address: int):
-        ptr_size = bv.arch.address_size
         self.__address = address
         self.__is16 = False
         self.__header = bv.read(self.__address, 6)
 
         if self.__header == GopclntabStructure.__HEADER__:
-            size = bv.read_pointer(self.__address + 8)
-            start_address = self.__address + 8 + ptr_size
-            end_address = start_address + (size * ptr_size * 2)
-
-            self.__entries_counter = 0
-            while start_address < end_address:
-                offset = bv.read_pointer(start_address + ptr_size)
-                function_address = bv.read_pointer(self.__address + offset)
-                function_name_address = bv.read_pointer(self.__address + offset + ptr_size, size=4) + self.__address
-                function_name = bv.get_ascii_string_at(function_name_address)
-                if not function_name:
-                    binaryninja.log_error(f"Couldn't recover function name from 0x{function_name_address}")
-                    continue
-
-                function_name = function_name.value
-                binaryninja.log_info(f"Found function {function_name} at 0x{hex(function_address)}")
-
-                if self.__entries is None:
-                    self.__entries = []
-
-                start_address += 2 * ptr_size
-                self.__entries.append((function_address, function_name))
-                self.__entries_counter += 1
+            self.__update_entries(bv)
 
         elif self.__header == GopclntabStructure.__HEADER16__:
             self.__is16 = True
-            self.__entries_counter = bv.read_pointer(self.__address + 8)
-            first_entry = bv.read_pointer(self.__address + ptr_size * 6 + 8) + self.__address
-            function_names_start = self.__address + 8 + ptr_size * 7
+            self.__update_entries16(bv)
 
-            for i in range(self.__entries_counter):
-                struct_ptr = bv.read_pointer(first_entry + i * ptr_size * 2 + 8) + first_entry
-                function_address = bv.read_pointer(first_entry + i * ptr_size * 2)
-                function_name_address = bv.read_pointer(struct_ptr + 8, size=4) + function_names_start
-                function_name = bv.get_ascii_string_at(function_name_address)
-                if not function_name:
-                    binaryninja.log_error(f"Couldn't recover function name from 0x{function_name_address}")
-                    continue
-
-                function_name = function_name.value
-                binaryninja.log_info(f"Found function {function_name} at 0x{hex(function_address)}")
-
-                if self.__entries is None:
-                    self.__entries = []
-
-                self.__entries.append((function_address, function_name))
         else:
             binaryninja.log_error("Unsupported header")
 
@@ -92,13 +109,18 @@ class GopclntabStructure:
         if section:
             base_address = section.start
 
+        # Try to manually find the `.gopclntab` by looking for one of the available headers
         if not base_address:
             search_address = 0
             for header_constant in [GopclntabStructure.__HEADER__, GopclntabStructure.__HEADER16__]:
                 candidate_address = bv.find_next_data(search_address, header_constant)
+
+                # Validate potential candidate address
                 if candidate_address and GopclntabStructure.validate_structure(bv, candidate_address):
                     base_address = candidate_address
-                    break;
+                    break
+
+                # In case the structure was invalid, resume searching from the previously found address
                 elif candidate_address:
                     search_address = candidate_address + 1
 
@@ -152,6 +174,7 @@ class GopclntabStructure:
             return
 
         gopclntab = GopclntabStructure.from_bv(bv, base_address)
+        function_counter = 0
         for function_address, function_name in gopclntab.entries:
             function = bv.get_function_at(function_address)
             if not function:
@@ -160,7 +183,9 @@ class GopclntabStructure:
 
             symbol = binaryninja.types.Symbol('FunctionSymbol', function_address, function_name, function_name)
             bv.define_user_symbol(symbol)
+            function_counter += 1
 
+        binaryninja.log_info(f"Successfully renamed {function_counter} functions.")
 
 
 
