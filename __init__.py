@@ -1,9 +1,9 @@
-from .binjago.gopclntab import GopclntabStructure
+from .binjago.gopclntab import rename_functions
 
 from binaryninja import PluginCommand
 
 PluginCommand.register(
     "binjago",
     "Automatically rename go functions based on symbol table",
-    GopclntabStructure.rename_functions
+    rename_functions
 )
