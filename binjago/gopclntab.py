@@ -120,7 +120,7 @@ class GopclntabStructure(binaryninja.BackgroundTaskThread):
                 candidate_address = self.__bv.find_next_data(search_address, header_constant)
 
                 # Validate potential candidate address
-                if candidate_address and GopclntabStructure.validate_structure(self.__bv, candidate_address):
+                if candidate_address and self.validate_structure(candidate_address):
                     base_address = candidate_address
                     break
 
@@ -134,19 +134,22 @@ class GopclntabStructure(binaryninja.BackgroundTaskThread):
         self.__address = base_address
         return self.__address
 
-    def validate_structure(self):
-        header = self.__bv.read(self.__address, 6)
+    def validate_structure(self, address: int = None):
+        if not address:
+            address = self.__address
+
+        header = self.__bv.read(address, 6)
         if header == GopclntabStructure.__HEADER__:
-            first_entry = self.__bv.read_pointer(self.__address + 8 + self.__ptr_size)
-            first_entry_offset = self.__bv.read_pointer(self.__address + 8 + self.__ptr_size * 2)
-            function_address = self.__address + first_entry_offset
+            first_entry = self.__bv.read_pointer(address + 8 + self.__ptr_size)
+            first_entry_offset = self.__bv.read_pointer(address + 8 + self.__ptr_size * 2)
+            function_address = address + first_entry_offset
             function_loc = self.__bv.read_pointer(function_address)
             if function_loc != first_entry:
                 return False
 
         elif header == GopclntabStructure.__HEADER16__:
             offset = 8 + self.__ptr_size * 6
-            first_entry = self.__bv.read_pointer(self.__address + offset, self.__ptr_size) + self.__address
+            first_entry = self.__bv.read_pointer(address + offset, self.__ptr_size) + address
             function_loc = self.__bv.read_pointer(first_entry, self.__ptr_size)
             struct_ptr = self.__bv.read_pointer(first_entry + 8, self.__ptr_size) + first_entry
             first_entry = self.__bv.read_pointer(struct_ptr, self.__ptr_size)
