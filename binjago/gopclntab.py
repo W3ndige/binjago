@@ -29,23 +29,24 @@ class GopclntabStructure(binaryninja.BackgroundTaskThread):
     def entries_counter(self):
         return self.__entries_counter
 
-    def __update_entries(self, bv: binaryninja.binaryview.BinaryView) -> bool:
+    def __update_entries(self) -> bool:
         if not self.__address or self.__is16:
             return False
 
-        ptr_size = bv.arch.address_size
-        size = bv.read_pointer(self.__address + 8)
+        ptr_size = self.__bv.arch.address_size
+        size = self.__bv.read_pointer(self.__address + 8)
         start_address = self.__address + 8 + ptr_size
         end_address = start_address + (size * ptr_size * 2)
 
         self.__entries_counter = 0
         while start_address < end_address:
-            offset = bv.read_pointer(start_address + ptr_size)
-            function_address = bv.read_pointer(self.__address + offset)
-            function_name_address = bv.read_pointer(self.__address + offset + ptr_size, size=4) + self.__address
-            function_name = bv.get_ascii_string_at(function_name_address)
+            offset = self.__bv.read_pointer(start_address + ptr_size)
+            function_address = self.__bv.read_pointer(self.__address + offset)
+            function_name_address = self.__bv.read_pointer(self.__address + offset + ptr_size, size=4) + self.__address
+            function_name = self.__bv.get_ascii_string_at(function_name_address)
             if not function_name:
                 binaryninja.log_error(f"Couldn't recover function name from 0x{function_name_address}")
+                start_address += 2 * ptr_size
                 continue
 
             function_name = function_name.value
